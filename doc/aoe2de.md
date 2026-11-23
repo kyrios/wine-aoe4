@@ -1,11 +1,6 @@
 # Age of Empires II: Definitive Edition with the soft-fault path
 
-AoE2 DE (`AoE2DE_s.exe`, Steam app 813780) has used the same anti-tamper scheme as AoE IV since its 2 June 2026 patch:
-- invalid-in-long-mode opcodes as traps (observed: `0x16`, PUSH SS),
-- handled by the game's own vectored exception handler,
-- which then continues into generated code.
-
-Under stock CrossOver this costs about 15,000 kernel traps per second in busy scenes. FPS collapses with the number of units that have health bars or are selected.
+Since its 2 June 2026 patch, AoE2 DE (`AoE2DE_s.exe`, Steam app 813780) shows the same slowdown under Rosetta as AoE IV: the game raises processor exceptions many thousands of times per second and handles each one itself, and every one takes the slow route through macOS and Rosetta. In busy scenes that is about 15,000 per second, and FPS collapses with the number of units that have health bars or are selected.
 
 The engine needs **no code change** for AoE2: the generic `X87_COOP_EXE` path in `__wine_main` plus environment variables is enough.
 
@@ -15,7 +10,7 @@ The engine needs **no code change** for AoE2: the generic `X87_COOP_EXE` path in
 export WINELOADER=<engine>/bin/wine
 export AOELAB_SIDECAR_PATH=<path>/x87sidecar     # NerRobDog/x87sidecar >= 4b6bad8
 export X87_COOP_EXE=AoE2DE_s.exe
-export AOELAB_SOFTFAULT_BRIDGE=1                 # maps the bridge at 0x180000000
+export AOELAB_SOFTFAULT_BRIDGE=1                 # maps the engine's bridge page
 export AOE_SOFTFAULT_TARGET1=0x180000000
 export AOE_SOFTFAULT_TARGET=0x180000010
 export X87_ALWAYS_NONE=1
@@ -25,18 +20,18 @@ export AOE_SOFTFAULT_PC=0x140001000
 export AOE_SOFTFAULT_END=0x143195ef2
 ```
 
-Do **not** set `AOELAB_CODE_CACHE_GAME`. The code cache reads a RelicCardinal-specific pointer and is gated to that executable anyway.
+Do **not** set `AOELAB_CODE_CACHE_GAME`: the code cache is specific to AoE IV and is gated to that executable anyway.
 
 ## Results
 
-Measured with an equivalent port of the same soft-fault code into the stock CrossOver 26.3.0 ntdll. It was **not** run on this engine build. Patch and scripts: https://github.com/kyrios/aoe2-mac-softfault
+Measured with an equivalent port of the same soft-fault code into the stock CrossOver 26.3.0 ntdll. It was **not** run on this engine build. Patch and notes: https://github.com/kyrios/TrebuchetApp/tree/main/fixes/wine-fast-exception-delivery-aoe2
 
 Setup: M2 Max, macOS 27.2.
 
 | | Stock | Soft-fault |
 |---|---|---|
-| Test program, `0x16` trap with VEH skip | 53.5 µs/trap | 0.62 µs/trap |
-| Game: SIGILL via kernel (DTrace) | about 15,000/s | 0 |
+| Test program, cost per exception | 53.5 µs | 0.62 µs |
+| Game: exceptions taking the slow route (DTrace) | about 15,000/s | 0 |
 | Game: paused busy scene, 60 units selected | about 10–12 FPS | about 22 FPS |
 
-**Remaining cost:** the handler still toggles about 30–50k code pages per second (RWX/RX), and the game threads still sit in Rosetta's runtime. Re-translation of the rewritten pages is the likely cause.
+**Remaining cost:** the game threads still spend much of their time in Rosetta's runtime, re-translating code that changes while the game runs.
